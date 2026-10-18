@@ -1,0 +1,14 @@
+[Unit]
+Description=SimpleStudy study tracker daemon
+Documentation=https://example.invalid/simplestudy
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/simplestudy-daemon
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

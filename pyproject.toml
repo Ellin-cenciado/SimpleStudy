@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simplestudy"
+version = "0.1.0"
+description = "A lightweight study tracker for Linux with carry-over hours"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+# GTK/Gio are used for the daemon (notifications/D-Bus) and the GUI. On most
+# distros they come as system packages (python-gobject / gtk4 / libadwaita).
+gui = []
+
+[project.scripts]
+simplestudy-daemon = "simplestudy.daemon.app:main"
+simplestudy-ctl = "simplestudy.client:main"
+simplestudy = "simplestudy.gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["simplestudy*"]
+
+[tool.setuptools.package-data]
+simplestudy = ["gui/*.ui", "gui/*.css"]

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SimpleStudy
+Comment=Track daily study hours with carry-over
+Exec=simplestudy
+Icon=alarm-symbolic
+Terminal=false
+Categories=Utility;Education;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true
