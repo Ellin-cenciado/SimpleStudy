@@ -40,19 +40,31 @@ class PhaseAdvance:
     transitions: tuple[Phase, ...]
     study_seconds: int
     break_seconds: int
+    #: Remaining one-shot break override (0 once it has been consumed).
+    break_override_seconds: int = 0
 
 
-def phase_length(config: PomodoroConfig, phase: Phase) -> int:
-    """Length in seconds of ``phase`` (0 for IDLE/COMPLETE)."""
+def phase_length(config: PomodoroConfig, phase: Phase, *, break_override: int = 0) -> int:
+    """Length in seconds of ``phase`` (0 for IDLE/COMPLETE).
+
+    ``break_override`` replaces the configured break length for one break; it is
+    used to give a subject-completion rest without changing the user's normal
+    pomodoro rhythm.
+    """
     if phase is Phase.STUDY:
         return config.study_seconds
     if phase is Phase.BREAK:
-        return config.break_seconds
+        return break_override if break_override > 0 else config.break_seconds
     return 0
 
 
 def advance(
-    phase: Phase, phase_elapsed: int, delta: int, config: PomodoroConfig
+    phase: Phase,
+    phase_elapsed: int,
+    delta: int,
+    config: PomodoroConfig,
+    *,
+    break_override: int = 0,
 ) -> PhaseAdvance:
     """Advance the phase machine by ``delta`` seconds.
 
@@ -68,7 +80,7 @@ def advance(
     brk = 0
     remaining = delta
     while remaining > 0 and phase in (Phase.STUDY, Phase.BREAK):
-        length = phase_length(config, phase)
+        length = phase_length(config, phase, break_override=break_override)
         left = length - phase_elapsed
         take = min(remaining, left)
         if phase is Phase.STUDY:
@@ -78,8 +90,12 @@ def advance(
         phase_elapsed += take
         remaining -= take
         if phase_elapsed >= length:
+            completed = phase
             phase = Phase.BREAK if phase is Phase.STUDY else Phase.STUDY
             phase_elapsed = 0
+            if completed is Phase.BREAK:
+                # The one-shot rest length applies to exactly one break.
+                break_override = 0
             transitions.append(phase)
 
     return PhaseAdvance(
@@ -88,4 +104,5 @@ def advance(
         transitions=tuple(transitions),
         study_seconds=study,
         break_seconds=brk,
+        break_override_seconds=break_override,
     )
