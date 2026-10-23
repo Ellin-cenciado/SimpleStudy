@@ -38,6 +38,7 @@ class ServiceTestBase(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
         self.state_file = self.tmp / "state.json"
         self.history_file = self.tmp / "history.db"
+        self.checklist_file = self.tmp / "checklist.json"
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -48,6 +49,7 @@ class ServiceTestBase(unittest.TestCase):
             clock,
             state_file=self.state_file,
             history_file=self.history_file,
+            checklist_file=self.checklist_file,
             notifier=notifier,
             persist=True,
         )

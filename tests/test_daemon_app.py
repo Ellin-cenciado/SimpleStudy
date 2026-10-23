@@ -53,6 +53,23 @@ class SnapshotVariantTest(unittest.TestCase):
         tuple_variant = GLib.Variant.new_tuple(variant)
         self.assertEqual(tuple_variant.get_type_string(), "(a{sv})")
 
+    def test_variant_contains_checklist_summary(self):
+        summary = app_mod.ChecklistSummary(
+            active_subject_id="s1",
+            active_item_id="i1",
+            remaining_seconds=-42,
+            overrun_seconds=42,
+            rest_remaining_seconds=120,
+            revision=7,
+        )
+        data = app_mod.snapshot_to_variant(make_snapshot(), summary).unpack()
+        self.assertEqual(data["ActiveSubjectId"], "s1")
+        self.assertEqual(data["ActiveItemId"], "i1")
+        self.assertEqual(data["ActiveItemRemainingSeconds"], -42)
+        self.assertEqual(data["ActiveItemOverrunSeconds"], 42)
+        self.assertEqual(data["RestRemainingSeconds"], 120)
+        self.assertEqual(data["ChecklistRevision"], 7)
+
 
 class IntrospectionTest(unittest.TestCase):
     def test_xml_parses_and_declares_interface(self):
@@ -80,6 +97,9 @@ class IntrospectionTest(unittest.TestCase):
         class FakeService:
             def snapshot(self_inner):
                 return make_snapshot()
+
+            def checklist_summary(self_inner):
+                return app_mod.ChecklistSummary()
 
         daemon.service = FakeService()
         provided = set()

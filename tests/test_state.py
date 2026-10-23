@@ -19,6 +19,7 @@ class StateRoundTripTest(unittest.TestCase):
             elapsed_seconds=1200,
             phase=Phase.BREAK,
             phase_elapsed_seconds=90,
+            break_override_seconds=300,
             running=True,
         )
         restored = state_mod.from_dict(state_mod.to_dict(original))

@@ -233,6 +233,79 @@ class PomodoroTest(unittest.TestCase):
         )
 
 
+class RestOverrideTest(unittest.TestCase):
+    """One-shot break lengths used for the 5-minute subject rest."""
+
+    def setUp(self) -> None:
+        self.pomodoro = PomodoroConfig(
+            study_seconds=40 * MINUTE, break_seconds=10 * MINUTE
+        )
+        self.clock = FakeClock(at(MONDAY))
+        self.tracker = make_tracker(
+            self.clock,
+            pomodoro=self.pomodoro,
+            schedule=default_schedule().with_day(
+                0, DayPolicy(100 * HOUR, DayKind.CARRIED)
+            ),
+        )
+
+    def test_rest_uses_override_then_returns_to_study(self):
+        self.tracker.start()
+        self.clock.advance(5 * MINUTE)
+        self.tracker.tick()
+        self.tracker.start_rest(5 * MINUTE)
+
+        self.assertEqual(self.tracker.state.phase, Phase.BREAK)
+        self.assertEqual(self.tracker.state.break_override_seconds, 5 * MINUTE)
+        self.assertEqual(self.tracker.phase_remaining_seconds, 5 * MINUTE)
+        self.assertTrue(self.tracker.state.running)
+
+        self.clock.advance(5 * MINUTE)
+        transitions = self.tracker.tick()
+        self.assertEqual(transitions, [Phase.STUDY])
+        self.assertEqual(self.tracker.state.phase, Phase.STUDY)
+        self.assertEqual(self.tracker.state.break_override_seconds, 0)
+
+    def test_override_does_not_affect_later_breaks(self):
+        self.tracker.start()
+        self.tracker.start_rest(5 * MINUTE)
+        self.clock.advance(5 * MINUTE)
+        self.tracker.tick()
+
+        self.clock.advance(40 * MINUTE)
+        self.tracker.tick()
+        self.assertEqual(self.tracker.state.phase, Phase.BREAK)
+        self.assertEqual(self.tracker.state.break_override_seconds, 0)
+        self.assertEqual(self.tracker.phase_length_seconds, 10 * MINUTE)
+
+    def test_skip_phase_clears_override(self):
+        self.tracker.start()
+        self.tracker.start_rest(5 * MINUTE)
+        self.tracker.skip_phase()
+        self.assertEqual(self.tracker.state.phase, Phase.STUDY)
+        self.assertEqual(self.tracker.state.break_override_seconds, 0)
+
+    def test_new_day_clears_override(self):
+        self.tracker.start_rest(5 * MINUTE)
+        self.clock.set_wall(at(TUESDAY))
+        self.tracker.tick()
+        self.assertEqual(self.tracker.state.break_override_seconds, 0)
+        self.assertFalse(self.tracker.state.running)
+
+    def test_queued_rest_waits_for_start(self):
+        self.tracker.start_rest(5 * MINUTE)
+        self.assertFalse(self.tracker.state.running)
+        self.clock.advance(HOUR)
+        self.tracker.tick()
+        self.assertEqual(self.tracker.state.break_override_seconds, 5 * MINUTE)
+
+        self.tracker.start()
+        self.clock.advance(5 * MINUTE)
+        self.tracker.tick()
+        self.assertEqual(self.tracker.state.break_override_seconds, 0)
+        self.assertEqual(self.tracker.state.phase, Phase.STUDY)
+
+
 class PersistenceRoundTripTest(unittest.TestCase):
     def test_state_can_be_restored(self):
         clock = FakeClock(at(MONDAY))
