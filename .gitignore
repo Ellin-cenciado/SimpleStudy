@@ -1,5 +1,14 @@
-simplestudy/__pycache__
-simplestudy/core/__pycache__
-simplestudy/daemon/__pycache__
-simplestudy/storage/__pycache__
-simplestudy/gui/__pycache__
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Build and test artifacts
+build/
+dist/
+*.egg-info/
+.coverage
