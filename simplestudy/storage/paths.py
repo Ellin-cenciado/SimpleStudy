@@ -31,6 +31,10 @@ def state_path() -> Path:
     return state_dir() / "state.json"
 
 
+def checklist_path() -> Path:
+    return state_dir() / "checklist.json"
+
+
 def history_path() -> Path:
     return state_dir() / "history.db"
 
