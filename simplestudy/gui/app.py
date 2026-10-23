@@ -17,6 +17,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 from .. import APP_ID, APP_NAME
 from ..storage import config as config_mod
+from .checklist_page import ChecklistPage
 from .client import DaemonClient
 from .opacity import OpacityController
 from .settings_page import SettingsPage
@@ -57,8 +58,10 @@ class SimpleStudyWindow(Adw.ApplicationWindow):
         self.timer_page = TimerPage(client)
         self.stats_page = StatsPage(client)
         self.settings_page = SettingsPage(client)
+        self.checklist_page = ChecklistPage(client)
 
         self.stack.add_titled_with_icon(self.timer_page, "timer", "Timer", "alarm-symbolic")
+        self.stack.add_titled_with_icon(self.checklist_page, "checklist", "Checklist", "view-list-symbolic")
         self.stack.add_titled_with_icon(self.stats_page, "stats", "Stats", "org.gnome.Software-symbolic")
         self.stack.add_titled_with_icon(self.settings_page, "settings", "Settings", "emblem-system-symbolic")
 
@@ -73,6 +76,7 @@ class SimpleStudyWindow(Adw.ApplicationWindow):
         self.opacity_controller = OpacityController(self, config.transparency)
 
         client.connect("changed", self._on_changed)
+        client.connect("checklist-changed", lambda *_: self.checklist_page.refetch())
         self.settings_page.connect("config-saved", self._on_config_saved)
 
     def _on_config_saved(self, _page, config) -> None:
@@ -82,6 +86,7 @@ class SimpleStudyWindow(Adw.ApplicationWindow):
         snapshot = snap if isinstance(snap, dict) else None
         self.banner.set_revealed(snapshot is None)
         self.timer_page.update(snapshot)
+        self.checklist_page.update(snapshot)
 
 
 class SimpleStudyApplication(Adw.Application):
