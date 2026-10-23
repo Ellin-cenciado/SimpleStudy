@@ -46,6 +46,8 @@ class TrackerState:
     break_seconds: int = 0
     phase: Phase = Phase.IDLE
     phase_elapsed_seconds: int = 0
+    #: One-shot break length (e.g. the 5-minute subject rest); 0 = normal.
+    break_override_seconds: int = 0
     running: bool = False
 
 
@@ -162,7 +164,11 @@ class Tracker:
 
     @property
     def phase_length_seconds(self) -> int:
-        return phase_length(self.pomodoro, self.state.phase)
+        return phase_length(
+            self.pomodoro,
+            self.state.phase,
+            break_override=self.state.break_override_seconds,
+        )
 
     @property
     def phase_remaining_seconds(self) -> int:
@@ -205,9 +211,11 @@ class Tracker:
             self.state.break_seconds = 0
             self.state.logical_day = self.state.logical_day + timedelta(days=1)
             self.state.phase_elapsed_seconds = 0
+            self.state.break_override_seconds = 0
 
         # A new day resets the pomodoro loop and stops the session.
         self.state.phase = Phase.IDLE
+        self.state.break_override_seconds = 0
         self.state.running = False
         self._frac = 0.0
         self.last_settled = results
@@ -231,9 +239,25 @@ class Tracker:
         if self.state.phase in (Phase.IDLE, Phase.COMPLETE):
             self.state.phase = Phase.STUDY
             self.state.phase_elapsed_seconds = 0
+            self.state.break_override_seconds = 0
         self.state.running = True
         self._last_monotonic = self.clock.monotonic()
         return []
+
+    def start_rest(self, seconds: int) -> None:
+        """Enter a one-shot break of ``seconds`` (subject-completion rest).
+
+        The running flag is left untouched: if the session is paused, the rest
+        is queued and runs when the user resumes.
+        """
+        if seconds <= 0:
+            raise ValueError("rest length must be positive")
+        self._accrue_to_now()
+        self.sync()
+        self.state.phase = Phase.BREAK
+        self.state.phase_elapsed_seconds = 0
+        self.state.break_override_seconds = int(seconds)
+        self._last_monotonic = self.clock.monotonic()
 
     def pause(self) -> None:
         self._accrue_to_now()
@@ -247,6 +271,8 @@ class Tracker:
         elif self.state.phase is Phase.BREAK:
             self.state.phase = Phase.STUDY
         self.state.phase_elapsed_seconds = 0
+        # Skipping away from or into a break cancels any one-shot rest length.
+        self.state.break_override_seconds = 0
         self._last_monotonic = self.clock.monotonic()
         return self.state.phase
 
@@ -284,9 +310,11 @@ class Tracker:
             self.state.phase_elapsed_seconds,
             whole,
             self.pomodoro,
+            break_override=self.state.break_override_seconds,
         )
         self.state.phase = result.phase
         self.state.phase_elapsed_seconds = result.phase_elapsed
+        self.state.break_override_seconds = result.break_override_seconds
         self.state.elapsed_seconds += whole
         self.state.study_seconds += result.study_seconds
         self.state.break_seconds += result.break_seconds
