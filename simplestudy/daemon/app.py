@@ -20,7 +20,7 @@ from ..core.tracker import Snapshot
 from ..storage import config as config_mod
 from ..storage import paths
 from .notify import GioNotifier
-from .service import StudyService
+from .service import ChecklistSummary, StudyService
 
 log = logging.getLogger("simplestudy.daemon")
 
@@ -33,6 +33,49 @@ INTROSPECTION_XML = """
     <method name="ReloadConfig"/>
     <method name="GetSnapshot">
       <arg type="a{sv}" name="snapshot" direction="out"/>
+    </method>
+    <method name="GetChecklist">
+      <arg type="s" name="json" direction="out"/>
+    </method>
+    <method name="AddSubject">
+      <arg type="s" name="name" direction="in"/>
+      <arg type="s" name="id" direction="out"/>
+    </method>
+    <method name="RenameSubject">
+      <arg type="s" name="id" direction="in"/>
+      <arg type="s" name="name" direction="in"/>
+    </method>
+    <method name="RemoveSubject">
+      <arg type="s" name="id" direction="in"/>
+    </method>
+    <method name="SelectSubject">
+      <arg type="s" name="id" direction="in"/>
+    </method>
+    <method name="AddItem">
+      <arg type="s" name="subject_id" direction="in"/>
+      <arg type="s" name="text" direction="in"/>
+      <arg type="u" name="duration_seconds" direction="in"/>
+      <arg type="s" name="id" direction="out"/>
+    </method>
+    <method name="RenameItem">
+      <arg type="s" name="id" direction="in"/>
+      <arg type="s" name="text" direction="in"/>
+    </method>
+    <method name="SetItemDuration">
+      <arg type="s" name="id" direction="in"/>
+      <arg type="u" name="seconds" direction="in"/>
+    </method>
+    <method name="RemoveItem">
+      <arg type="s" name="id" direction="in"/>
+    </method>
+    <method name="CheckItem">
+      <arg type="s" name="id" direction="in"/>
+    </method>
+    <method name="UncheckLastItem">
+      <arg type="s" name="subject_id" direction="in"/>
+    </method>
+    <method name="ResetSubject">
+      <arg type="s" name="subject_id" direction="in"/>
     </method>
     <property name="LogicalDay" type="s" access="read"/>
     <property name="Weekday" type="s" access="read"/>
@@ -49,6 +92,12 @@ INTROSPECTION_XML = """
     <property name="Running" type="b" access="read"/>
     <property name="DayComplete" type="b" access="read"/>
     <property name="IsFreeDay" type="b" access="read"/>
+    <property name="ActiveSubjectId" type="s" access="read"/>
+    <property name="ActiveItemId" type="s" access="read"/>
+    <property name="ActiveItemRemainingSeconds" type="i" access="read"/>
+    <property name="ActiveItemOverrunSeconds" type="u" access="read"/>
+    <property name="RestRemainingSeconds" type="u" access="read"/>
+    <property name="ChecklistRevision" type="u" access="read"/>
     <signal name="Changed">
       <arg type="a{sv}" name="snapshot"/>
     </signal>
@@ -59,13 +108,17 @@ INTROSPECTION_XML = """
     <signal name="DayRolled">
       <arg type="s" name="date"/>
     </signal>
+    <signal name="ChecklistChanged"/>
   </interface>
 </node>
 """
 
 
-def snapshot_to_variant(snapshot: Snapshot) -> GLib.Variant:
+def snapshot_to_variant(
+    snapshot: Snapshot, checklist: ChecklistSummary | None = None
+) -> GLib.Variant:
     """Convert a :class:`Snapshot` to a D-Bus ``a{sv}`` dictionary."""
+    checklist = checklist or ChecklistSummary()
     fields: dict[str, GLib.Variant] = {
         "LogicalDay": GLib.Variant("s", snapshot.logical_day.isoformat()),
         "Weekday": GLib.Variant("s", snapshot.weekday),
@@ -82,6 +135,12 @@ def snapshot_to_variant(snapshot: Snapshot) -> GLib.Variant:
         "Running": GLib.Variant("b", snapshot.running),
         "DayComplete": GLib.Variant("b", snapshot.day_complete),
         "IsFreeDay": GLib.Variant("b", snapshot.is_free_day),
+        "ActiveSubjectId": GLib.Variant("s", checklist.active_subject_id),
+        "ActiveItemId": GLib.Variant("s", checklist.active_item_id),
+        "ActiveItemRemainingSeconds": GLib.Variant("i", checklist.remaining_seconds),
+        "ActiveItemOverrunSeconds": GLib.Variant("u", checklist.overrun_seconds),
+        "RestRemainingSeconds": GLib.Variant("u", checklist.rest_remaining_seconds),
+        "ChecklistRevision": GLib.Variant("u", checklist.revision),
     }
     return GLib.Variant("a{sv}", fields)
 
@@ -158,7 +217,10 @@ class Daemon:
 
     def _on_tick(self) -> bool:
         assert self.service is not None
+        revision_before = self.service.checklist_revision()
         events = self.service.tick()
+        if self.service.checklist_revision() != revision_before:
+            self._emit_signal("ChecklistChanged", None)
         self._emit_changed()
         for event in events:
             if event.kind == "phase":
@@ -180,7 +242,9 @@ class Daemon:
 
     def _emit_changed(self) -> None:
         assert self.service is not None
-        snapshot = snapshot_to_variant(self.service.snapshot())
+        snapshot = snapshot_to_variant(
+            self.service.snapshot(), self.service.checklist_summary()
+        )
         self._emit_signal("Changed", GLib.Variant.new_tuple(snapshot))
 
     def _on_method_call(
@@ -194,6 +258,7 @@ class Daemon:
         invocation: Gio.DBusMethodInvocation,
     ) -> None:
         assert self.service is not None
+        revision_before = self.service.checklist_revision()
         try:
             if method_name == "Start":
                 self.service.start()
@@ -209,13 +274,73 @@ class Daemon:
                 self.service.reload_config(self.config)
                 invocation.return_value(None)
             elif method_name == "GetSnapshot":
-                snapshot = snapshot_to_variant(self.service.snapshot())
+                snapshot = snapshot_to_variant(
+                    self.service.snapshot(), self.service.checklist_summary()
+                )
                 invocation.return_value(GLib.Variant.new_tuple(snapshot))
+            elif method_name == "GetChecklist":
+                invocation.return_value(
+                    GLib.Variant.new_tuple(
+                        GLib.Variant("s", self.service.checklist_json())
+                    )
+                )
+            elif method_name == "AddSubject":
+                (name,) = parameters.unpack()
+                new_id = self.service.add_subject(name)
+                invocation.return_value(
+                    GLib.Variant.new_tuple(GLib.Variant("s", new_id))
+                )
+            elif method_name == "RenameSubject":
+                subject_id, name = parameters.unpack()
+                self.service.rename_subject(subject_id, name)
+                invocation.return_value(None)
+            elif method_name == "RemoveSubject":
+                (subject_id,) = parameters.unpack()
+                self.service.remove_subject(subject_id)
+                invocation.return_value(None)
+            elif method_name == "SelectSubject":
+                (subject_id,) = parameters.unpack()
+                self.service.select_subject(subject_id)
+                invocation.return_value(None)
+            elif method_name == "AddItem":
+                subject_id, text, duration = parameters.unpack()
+                new_id = self.service.add_item(subject_id, text, int(duration))
+                invocation.return_value(
+                    GLib.Variant.new_tuple(GLib.Variant("s", new_id))
+                )
+            elif method_name == "RenameItem":
+                item_id, text = parameters.unpack()
+                self.service.rename_item(item_id, text)
+                invocation.return_value(None)
+            elif method_name == "SetItemDuration":
+                item_id, seconds = parameters.unpack()
+                self.service.set_item_duration(item_id, int(seconds))
+                invocation.return_value(None)
+            elif method_name == "RemoveItem":
+                (item_id,) = parameters.unpack()
+                self.service.remove_item(item_id)
+                invocation.return_value(None)
+            elif method_name == "CheckItem":
+                (item_id,) = parameters.unpack()
+                self.service.check_item(item_id)
+                invocation.return_value(None)
+            elif method_name == "UncheckLastItem":
+                (subject_id,) = parameters.unpack()
+                self.service.uncheck_last_item(subject_id)
+                invocation.return_value(None)
+            elif method_name == "ResetSubject":
+                (subject_id,) = parameters.unpack()
+                self.service.reset_subject(subject_id)
+                invocation.return_value(None)
             else:
                 invocation.return_dbus_error(
                     DBUS_INTERFACE + ".UnknownMethod", f"Unknown method {method_name}"
                 )
+        except ValueError as error:
+            invocation.return_dbus_error(DBUS_INTERFACE + ".InvalidArgument", str(error))
         finally:
+            if self.service.checklist_revision() != revision_before:
+                self._emit_signal("ChecklistChanged", None)
             self._emit_changed()
 
     def _on_get_property(
@@ -229,6 +354,7 @@ class Daemon:
     ) -> GLib.Variant | None:
         assert self.service is not None
         snapshot = self.service.snapshot()
+        checklist = self.service.checklist_summary()
         mapping = {
             "LogicalDay": GLib.Variant("s", snapshot.logical_day.isoformat()),
             "Weekday": GLib.Variant("s", snapshot.weekday),
@@ -245,6 +371,18 @@ class Daemon:
             "Running": GLib.Variant("b", snapshot.running),
             "DayComplete": GLib.Variant("b", snapshot.day_complete),
             "IsFreeDay": GLib.Variant("b", snapshot.is_free_day),
+            "ActiveSubjectId": GLib.Variant("s", checklist.active_subject_id),
+            "ActiveItemId": GLib.Variant("s", checklist.active_item_id),
+            "ActiveItemRemainingSeconds": GLib.Variant(
+                "i", checklist.remaining_seconds
+            ),
+            "ActiveItemOverrunSeconds": GLib.Variant(
+                "u", checklist.overrun_seconds
+            ),
+            "RestRemainingSeconds": GLib.Variant(
+                "u", checklist.rest_remaining_seconds
+            ),
+            "ChecklistRevision": GLib.Variant("u", checklist.revision),
         }
         return mapping.get(property_name)
 
